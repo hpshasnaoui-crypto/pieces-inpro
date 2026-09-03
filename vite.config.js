@@ -18,6 +18,26 @@ function posterWriter() {
     name: 'poster-writer',
     apply: 'serve',
     configureServer(server) {
+      // Meme principe pour les .usdz generes par gen-usdz.html (AR iPhone).
+      server.middlewares.use('/__usdz', async (req, res, next) => {
+        if (req.method !== 'POST') return next()
+
+        const name = (req.url || '').replace(/^\//, '')
+        if (!/^[a-z0-9_-]+$/i.test(name)) {
+          res.statusCode = 400
+          return res.end('nom invalide')
+        }
+
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+
+        const dir = resolve(root, 'public/models')
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(resolve(dir, name + '.usdz'), Buffer.concat(chunks))
+
+        res.statusCode = 200
+        res.end('ok')
+      })
       server.middlewares.use('/__poster', async (req, res, next) => {
         if (req.method !== 'POST') return next()
 

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Generation des .usdz</title>
+    <style>
+      body { font: 14px system-ui, sans-serif; margin: 8px; }
+    </style>
+  </head>
+  <body>
+    <p id="log">demarrage...</p>
+
+    <script type="module">
+      import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+      import { USDZExporter } from 'three/examples/jsm/exporters/USDZExporter.js'
+      import { pieces } from '/src/pieces.js'
+
+      // Quick Look (AR sur iPhone) ne lit pas le .glb : il lui faut un .usdz.
+      // On recharge la page entre chaque modele pour repartir sur un contexte
+      // propre, comme pour gen-posters.html.
+      const log = document.getElementById('log')
+      const params = new URLSearchParams(location.search)
+      const i = Number(params.get('i') ?? 0)
+      const auto = params.get('auto') !== '0'
+
+      const setLog = (t) => { log.textContent = t; console.log(t) }
+
+      // L'USDZ stocke les textures quasi non compressees : un .glb de 17 Mo
+      // ressort a 28 Mo. On plafonne les textures a 512 px, suffisant pour de
+      // l'AR sur telephone : ca ramene les textures de 13,9 Mo a 4,6 Mo.
+      const TEXTURE_MAX = 512
+
+      function reduireTexture(texture) {
+        const img = texture.image
+        if (!img || !img.width) return
+        const grand = Math.max(img.width, img.height)
+        if (grand <= TEXTURE_MAX) return
+        const k = TEXTURE_MAX / grand
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(img.width * k))
+        canvas.height = Math.max(1, Math.round(img.height * k))
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+        texture.image = canvas
+        texture.needsUpdate = true
+      }
+
+      function reduireTextures(scene) {
+        const vues = new Set()
+        const canaux = ['map', 'normalMap', 'roughnessMap', 'metalnessMap',
+          'emissiveMap', 'aoMap', 'alphaMap']
+        scene.traverse((o) => {
+          if (!o.material) return
+          for (const m of [].concat(o.material)) {
+            for (const c of canaux) {
+              const t = m[c]
+              if (t && !vues.has(t)) { vues.add(t); reduireTexture(t) }
+            }
+          }
+        })
+        return vues.size
+      }
+
+      window.__total = pieces.length
+      window.__index = i
+      window.__done = i >= pieces.length
+
+      if (window.__done) {
+        setLog(`TERMINE ${pieces.length}/${pieces.length}`)
+      } else {
+        const piece = pieces[i]
+        setLog(`${i + 1}/${pieces.length} : ${piece.slug}`)
+        try {
+          const gltf = await new GLTFLoader().loadAsync(piece.src)
+          const nbTextures = reduireTextures(gltf.scene)
+          const usdz = await new USDZExporter().parseAsync(gltf.scene)
+          const blob = new Blob([usdz], { type: 'model/vnd.usdz+zip' })
+          const res = await fetch('/__usdz/' + piece.slug, {
+            method: 'POST',
+            body: blob,
+          })
+          window.__dernier = {
+            slug: piece.slug,
+            octets: blob.size,
+            textures: nbTextures,
+            status: res.status,
+          }
+          setLog(`OK ${i + 1}/${pieces.length} : ${piece.slug} (${blob.size} o)`)
+          if (auto) location.search = `?i=${i + 1}`
+        } catch (e) {
+          window.__erreur = String(e)
+          setLog(`ECHEC ${piece.slug} : ${e}`)
+        }
+      }
+    </script>
+  </body>
+</html>
