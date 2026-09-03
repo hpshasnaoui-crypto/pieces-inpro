@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Generation des vignettes</title>
+    <style>
+      body { font: 14px system-ui, sans-serif; margin: 8px; }
+      canvas { border: 1px solid #ddd; }
+    </style>
+  </head>
+  <body>
+    <p id="log">demarrage...</p>
+
+    <script type="module">
+      import * as THREE from 'three'
+      import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+      import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
+      import { pieces } from '/src/pieces.js'
+
+      // Rendu EXPLICITE (renderer.render), pas de boucle requestAnimationFrame :
+      // fonctionne meme quand l'onglet est masque, contrairement a model-viewer
+      // qui suspend son rendu et produit alors des vignettes vides.
+      const TAILLE = 640
+      const log = document.getElementById('log')
+      const params = new URLSearchParams(location.search)
+      const i = Number(params.get('i') ?? 0)
+      const auto = params.get('auto') !== '0'
+
+      const setLog = (t) => { log.textContent = t; console.log(t) }
+
+      async function rendre(piece) {
+        const renderer = new THREE.WebGLRenderer({
+          antialias: true,
+          alpha: true,
+          preserveDrawingBuffer: true,
+        })
+        renderer.setPixelRatio(1)
+        renderer.setSize(TAILLE, TAILLE)
+        renderer.toneMapping = THREE.NeutralToneMapping ?? THREE.ACESFilmicToneMapping
+        renderer.toneMappingExposure = 1
+        document.body.appendChild(renderer.domElement)
+
+        const scene = new THREE.Scene()
+        const pmrem = new THREE.PMREMGenerator(renderer)
+        scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+
+        const gltf = await new GLTFLoader().loadAsync(piece.src)
+        scene.add(gltf.scene)
+
+        // Cadrage identique au reglage par defaut de model-viewer :
+        // camera-orbit 0deg 75deg, distance ajustee a la sphere englobante.
+        const box = new THREE.Box3().setFromObject(gltf.scene)
+        const centre = box.getCenter(new THREE.Vector3())
+        const rayon = box.getBoundingSphere(new THREE.Sphere()).radius
+        const fov = 45
+        const distance = (rayon / Math.sin((fov * Math.PI) / 360)) * 1.05
+        const phi = (75 * Math.PI) / 180
+
+        const camera = new THREE.PerspectiveCamera(fov, 1, distance / 100, distance * 10)
+        camera.position.set(
+          centre.x,
+          centre.y + distance * Math.cos(phi),
+          centre.z + distance * Math.sin(phi),
+        )
+        camera.lookAt(centre)
+
+        renderer.render(scene, camera)
+
+        const blob = await new Promise((r) =>
+          renderer.domElement.toBlob(r, 'image/webp', 0.82),
+        )
+
+        // Liberation : sans ca, 40 contextes WebGL saturent le navigateur.
+        pmrem.dispose()
+        gltf.scene.traverse((o) => {
+          if (o.geometry) o.geometry.dispose()
+          if (o.material) {
+            for (const m of [].concat(o.material)) {
+              for (const k in m) if (m[k]?.isTexture) m[k].dispose()
+              m.dispose()
+            }
+          }
+        })
+        renderer.dispose()
+        renderer.forceContextLoss()
+        renderer.domElement.remove()
+
+        return blob
+      }
+
+      window.__total = pieces.length
+      window.__index = i
+      window.__done = i >= pieces.length
+
+      if (window.__done) {
+        setLog(`TERMINE ${pieces.length}/${pieces.length}`)
+      } else {
+        const piece = pieces[i]
+        setLog(`${i + 1}/${pieces.length} : ${piece.slug}`)
+        try {
+          const blob = await rendre(piece)
+          const res = await fetch('/__poster/' + piece.slug, { method: 'POST', body: blob })
+          window.__dernier = { slug: piece.slug, octets: blob.size, status: res.status }
+          setLog(`OK ${i + 1}/${pieces.length} : ${piece.slug} (${blob.size} o)`)
+          if (auto) location.search = `?i=${i + 1}`
+        } catch (e) {
+          window.__erreur = String(e)
+          setLog(`ECHEC ${piece.slug} : ${e}`)
+        }
+      }
+    </script>
+  </body>
+</html>

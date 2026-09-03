@@ -1,0 +1,16 @@
+# Dependances
+node_modules/
+
+# Build
+dist/
+
+# Sources 3D d'origine : deja copiees dans public/models/, ne pas dupliquer
+# dans le depot (686 Mo).
+glb files 02-09/
+
+# Fichiers temporaires Office
+~$*
+
+# Logs
+*.log
+npm-debug.log*
