@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Optimisation des .glb</title>
+    <style>
+      body { font: 14px system-ui, sans-serif; margin: 8px; }
+    </style>
+  </head>
+  <body>
+    <p id="log">demarrage...</p>
+
+    <script type="module">
+      import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+      import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
+      import { pieces } from '/src/pieces.js'
+
+      // Certains modeles embarquent des textures de 4591 px : au-dela de la
+      // limite de 4096 px de beaucoup d'iPhone, et 55 Mo de memoire GPU pour
+      // une seule texture. Safari iOS abandonne alors le rendu. On plafonne
+      // a MAX px. GLTFLoader conserve le mimeType d'origine (JPEG), donc le
+      // reencodage ne fait pas gonfler les fichiers.
+      const MAX = Number(new URLSearchParams(location.search).get('max') ?? 2048)
+
+      const log = document.getElementById('log')
+      const params = new URLSearchParams(location.search)
+      const i = Number(params.get('i') ?? 0)
+      const auto = params.get('auto') !== '0'
+
+      const setLog = (t) => { log.textContent = t; console.log(t) }
+
+      window.__total = pieces.length
+      window.__index = i
+      window.__done = i >= pieces.length
+      window.__max = MAX
+
+      if (window.__done) {
+        setLog(`TERMINE ${pieces.length}/${pieces.length}`)
+      } else {
+        const piece = pieces[i]
+        setLog(`${i + 1}/${pieces.length} : ${piece.slug}`)
+        try {
+          const avant = (await fetch(piece.src)).headers.get('content-length')
+          const gltf = await new GLTFLoader().loadAsync(piece.src)
+
+          const glb = await new GLTFExporter().parseAsync(gltf.scene, {
+            binary: true,
+            maxTextureSize: MAX,
+          })
+          const blob = new Blob([glb], { type: 'model/gltf-binary' })
+
+          const res = await fetch('/__glb/' + piece.slug, {
+            method: 'POST',
+            body: blob,
+          })
+          window.__dernier = {
+            slug: piece.slug,
+            avant: Number(avant) || null,
+            apres: blob.size,
+            status: res.status,
+          }
+          const mo = (n) => (n / 1048576).toFixed(1)
+          setLog(`OK ${i + 1}/${pieces.length} : ${piece.slug} — `
+            + `${mo(avant)} Mo -> ${mo(blob.size)} Mo`)
+          if (auto) location.search = `?i=${i + 1}&max=${MAX}`
+        } catch (e) {
+          window.__erreur = String(e)
+          setLog(`ECHEC ${piece.slug} : ${e}`)
+        }
+      }
+    </script>
+  </body>
+</html>

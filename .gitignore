@@ -14,3 +14,6 @@ glb files 02-09/
 # Logs
 *.log
 npm-debug.log*
+
+# Sortie temporaire de gen-optimise.html, fusionnee dans public/models/
+models-opt/

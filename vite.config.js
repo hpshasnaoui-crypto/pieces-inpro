@@ -18,6 +18,29 @@ function posterWriter() {
     name: 'poster-writer',
     apply: 'serve',
     configureServer(server) {
+      // .glb reencodes par gen-optimise.html, textures plafonnees.
+      // Sortie dans un dossier a part pour ne pas ecraser les originaux
+      // avant verification.
+      server.middlewares.use('/__glb', async (req, res, next) => {
+        if (req.method !== 'POST') return next()
+
+        const name = (req.url || '').replace(/^\//, '')
+        if (!/^[a-z0-9_-]+$/i.test(name)) {
+          res.statusCode = 400
+          return res.end('nom invalide')
+        }
+
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+
+        const dir = resolve(root, 'models-opt')
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(resolve(dir, name + '.glb'), Buffer.concat(chunks))
+
+        res.statusCode = 200
+        res.end('ok')
+      })
+
       // Meme principe pour les .usdz generes par gen-usdz.html (AR iPhone).
       server.middlewares.use('/__usdz', async (req, res, next) => {
         if (req.method !== 'POST') return next()
